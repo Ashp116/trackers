@@ -243,8 +243,9 @@ class KSPSolver:
                     )
 
                 for node_b in node_frames[t + 1]:
-                    cost = self._edge_cost(node_a, node_b)
-                    G.add_edge(node_a, node_b, weight=cost)
+                    if self._in_door(node_b):
+                        cost = self._edge_cost(node_a, node_b)
+                        G.add_edge(node_a, node_b, weight=cost)
 
         for node in node_frames[0]:
             G.add_edge(self.source, node, weight=0.0)
