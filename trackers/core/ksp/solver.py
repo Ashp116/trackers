@@ -261,10 +261,9 @@ class KSPSolver:
         the configured weights for IoU, distance, size, and confidence.
 
         Args:
-            k (Optional[int]): The number of tracks (paths) to extract. If None:
-                1. Uses the maximum number of detections in any frame
-                2. Plus a small buffer for track fragmentation
-                3. Limited to a reasonable maximum
+            k (Optional[int]): The number of tracks (paths) to extract. If None,
+                uses the number of edges connected to the source node, which
+                represents all possible track start points.
 
         Returns:
             List[List[TrackNode]]: A list of tracks, each track is a list of TrackNode
@@ -277,8 +276,8 @@ class KSPSolver:
         paths: List[List[TrackNode]] = []
 
         if k is None:
-            max_frame_detections = max(len(f.xyxy) for f in self.detection_per_frame)
-            k = min(max_frame_detections + 5, int(max_frame_detections * 1.5))
+            k = sum(1 for _, v, d in G_base.edges(self.source, data=True) 
+                   if d[self.weight_key] < float("inf"))
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
