@@ -228,10 +228,14 @@ class KSPSolver:
                 frame_nodes.append(node)
             node_frames.append(frame_nodes)
 
-        for t in range(len(node_frames) - 1):
+        total_frames = len(node_frames) - 1
+
+        for t in range(total_frames):
             for node_a in node_frames[t]:
-                if self._in_door(node_a):
+                if t > 0 and self._in_door(node_a):
                     G.add_edge(self.source, node_a, weight=t * self.entry_weight)
+                
+                if t < total_frames and self._in_door(node_a):
                     G.add_edge(
                         node_a,
                         self.sink,
