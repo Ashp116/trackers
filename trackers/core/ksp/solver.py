@@ -229,10 +229,11 @@ class KSPSolver:
             node_frames.append(frame_nodes)
 
         total_frames = len(node_frames) - 1
-
+        source_edges = 0
         for t in range(total_frames):
             for node_a in node_frames[t]:
                 if t > 0 and self._in_door(node_a):
+                    source_edges += 1
                     G.add_edge(self.source, node_a, weight=t * self.entry_weight)
                     G.add_edge(
                         node_a,
@@ -246,10 +247,12 @@ class KSPSolver:
 
         for node in node_frames[0]:
             G.add_edge(self.source, node, weight=0.0)
+            source_edges += 1
         for node in node_frames[-1]:
             G.add_edge(node, self.sink, weight=0.0)
 
         self.graph = G
+        return source_edges
 
     def solve(self, k: Optional[int] = None) -> List[List[TrackNode]]:
         """
@@ -269,14 +272,14 @@ class KSPSolver:
             List[List[TrackNode]]: A list of tracks, each track is a list of TrackNode
                 objects representing the detections assigned to that track.
         """
-        self._build_graph()
+        source_edges = self._build_graph()
 
         G_base = self.graph.copy()
         edge_reuse: defaultdict[Tuple[Any, Any], int] = defaultdict(int)
         paths: List[List[TrackNode]] = []
 
         if k is None:
-            k = len(list(G_base.successors(self.source)))
+            k = source_edges
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
