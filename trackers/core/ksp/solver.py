@@ -262,8 +262,8 @@ class KSPSolver:
 
         Args:
             k (Optional[int]): The number of tracks (paths) to extract. If None,
-                uses the number of edges connected to the source node, which
-                represents all possible track start points.
+                uses the number of direct successors of the source node, which
+                represents the number of track start points.
 
         Returns:
             List[List[TrackNode]]: A list of tracks, each track is a list of TrackNode
@@ -276,8 +276,7 @@ class KSPSolver:
         paths: List[List[TrackNode]] = []
 
         if k is None:
-            k = sum(1 for _, v, d in G_base.edges(self.source, data=True) 
-                   if d[self.weight_key] < float("inf"))
+            k = len(list(G_base.successors(self.source)))
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
