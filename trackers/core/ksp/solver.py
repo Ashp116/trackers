@@ -213,6 +213,7 @@ class KSPSolver:
 
         node_frames = []
 
+        # Build nodes first
         for frame_id, detections in enumerate(self.detection_per_frame):
             frame_nodes = []
             for det_idx, bbox in enumerate(detections.xyxy):
@@ -232,7 +233,15 @@ class KSPSolver:
 
         for t in range(total_frames):
             for node_a in node_frames[t]:
+                for node_b in node_frames[t + 1]:
+                    cost = self._edge_cost(node_a, node_b)
+                    G.add_edge(node_a, node_b, weight=cost)
+
+        for t in range(total_frames):
+            for node_a in node_frames[t]:
                 if t > 0 and self._in_door(node_a):
+                    for pred in list(G.predecessors(node_a)):
+                        G.remove_edge(pred, node_a)
                     G.add_edge(self.source, node_a, weight=t * self.entry_weight)
                 
                 if t < total_frames and self._in_door(node_a):
@@ -242,11 +251,7 @@ class KSPSolver:
                         weight=(len(node_frames) - 1 - t) * self.exit_weight,
                     )
 
-                for node_b in node_frames[t + 1]:
-                    if self._in_door(node_b):
-                        cost = self._edge_cost(node_a, node_b)
-                        G.add_edge(node_a, node_b, weight=cost)
-
+        # Handle first and last frame
         for node in node_frames[0]:
             G.add_edge(self.source, node, weight=0.0)
         for node in node_frames[-1]:
