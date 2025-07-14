@@ -241,9 +241,8 @@ class KSPSolver:
                     )
 
                 for node_b in node_frames[t + 1]:
-                    if self._in_door(node_b):
-                        cost = self._edge_cost(node_a, node_b)
-                        G.add_edge(node_a, node_b, weight=cost)
+                    cost = self._edge_cost(node_a, node_b)
+                    G.add_edge(node_a, node_b, weight=cost)
 
         for node in node_frames[0]:
             G.add_edge(self.source, node, weight=0.0)
@@ -262,10 +261,9 @@ class KSPSolver:
         the configured weights for IoU, distance, size, and confidence.
 
         Args:
-            k (Optional[int]): The number of tracks (paths) to extract. If None:
-                1. Uses the maximum number of detections in any frame
-                2. Plus a small buffer for track fragmentation
-                3. Limited to a reasonable maximum
+            k (Optional[int]): The number of tracks (paths) to extract. If None,
+                uses the number of direct successors of the source node, which
+                represents the number of track start points.
 
         Returns:
             List[List[TrackNode]]: A list of tracks, each track is a list of TrackNode
@@ -278,8 +276,7 @@ class KSPSolver:
         paths: List[List[TrackNode]] = []
 
         if k is None:
-            max_frame_detections = max(len(f.xyxy) for f in self.detection_per_frame)
-            k = min(max_frame_detections + 5, int(max_frame_detections * 1.5))
+            k = len(list(G_base.successors(self.source)))
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
