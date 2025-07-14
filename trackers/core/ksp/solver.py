@@ -213,7 +213,6 @@ class KSPSolver:
 
         node_frames = []
 
-        # Build nodes first
         for frame_id, detections in enumerate(self.detection_per_frame):
             frame_nodes = []
             for det_idx, bbox in enumerate(detections.xyxy):
@@ -231,23 +230,25 @@ class KSPSolver:
 
         total_frames = len(node_frames) - 1
 
-        for t, frame_nodes in enumerate(node_frames):
-            for node in frame_nodes:
-                if t == 0 or self._in_door(node):
-                    G.add_edge(self.source, node, weight=t * self.entry_weight)
-                else:
-                    G.add_edge(self.source, node, weight=t * self.entry_weight * 2)
-
-                if t == total_frames or self._in_door(node):
-                    G.add_edge(node, self.sink, weight=(total_frames - t) * self.exit_weight)
-                else:
-                    G.add_edge(node, self.sink, weight=(total_frames - t) * self.exit_weight * 2)
-
         for t in range(total_frames):
             for node_a in node_frames[t]:
+                if t > 0 and self._in_door(node_a):
+                    G.add_edge(self.source, node_a, weight=t * self.entry_weight)
+                    G.add_edge(
+                        node_a,
+                        self.sink,
+                        weight=(len(node_frames) - 1 - t) * self.exit_weight,
+                    )
+
                 for node_b in node_frames[t + 1]:
-                    cost = self._edge_cost(node_a, node_b)
-                    G.add_edge(node_a, node_b, weight=cost)
+                    if self._in_door(node_b):
+                        cost = self._edge_cost(node_a, node_b)
+                        G.add_edge(node_a, node_b, weight=cost)
+
+        for node in node_frames[0]:
+            G.add_edge(self.source, node, weight=0.0)
+        for node in node_frames[-1]:
+            G.add_edge(node, self.sink, weight=0.0)
 
         self.graph = G
 
@@ -261,9 +262,10 @@ class KSPSolver:
         the configured weights for IoU, distance, size, and confidence.
 
         Args:
-            k (Optional[int]): The number of tracks (paths) to extract. If None,
-                automatically determines based on the number of detections and
-                connectivity in the graph.
+            k (Optional[int]): The number of tracks (paths) to extract. If None:
+                1. Uses the maximum number of detections in any frame
+                2. Plus a small buffer for track fragmentation
+                3. Limited to a reasonable maximum
 
         Returns:
             List[List[TrackNode]]: A list of tracks, each track is a list of TrackNode
@@ -276,15 +278,8 @@ class KSPSolver:
         paths: List[List[TrackNode]] = []
 
         if k is None:
-            # Get the maximum number of detections in any frame
             max_frame_detections = max(len(f.xyxy) for f in self.detection_per_frame)
-            # Get the number of detections connected to source (potential track starts)
-            num_source_connections = len(list(G_base.successors(self.source)))
-            # Use the larger of:
-            # 1. Maximum detections in any frame
-            # 2. Number of nodes connected to source
-            # Add a small buffer to account for track splits/merges
-            k = max(max_frame_detections, num_source_connections) + 3
+            k = min(max_frame_detections + 5, int(max_frame_detections * 1.5))
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
