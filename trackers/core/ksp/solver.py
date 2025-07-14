@@ -276,14 +276,24 @@ class KSPSolver:
         paths: List[List[TrackNode]] = []
 
         if k is None:
-            k = len(list(G_base.successors(self.source)))
+            max_frame_detections = max(len(f.xyxy) for f in self.detection_per_frame)
+
+            entry_nodes = sum(
+                1
+                for _, v, d in G_base.edges(self.source, data=True)
+                if d[self.weight_key] < float("inf")
+            )
+
+            k = max(max_frame_detections, entry_nodes)
+
+            k = int(k * 1.2)
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
 
             for u, v, data in G_mod.edges(data=True):
                 base = data[self.weight_key]
-                penalty = self.path_overlap_penalty * 1000 * edge_reuse[(u, v)] * base
+                penalty = self.path_overlap_penalty * 1e8 * edge_reuse[(u, v)] * base
                 data[self.weight_key] = base + penalty
 
             try:
