@@ -277,16 +277,8 @@ class KSPSolver:
 
         if k is None:
             max_frame_detections = max(len(f.xyxy) for f in self.detection_per_frame)
+            k = min(max_frame_detections + 5, int(max_frame_detections * 1.5))
 
-            entry_nodes = sum(
-                1
-                for _, v, d in G_base.edges(self.source, data=True)
-                if d[self.weight_key] < float("inf")
-            )
-
-            k = max(max_frame_detections, entry_nodes)
-
-            k = int(k * 1.2)
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
