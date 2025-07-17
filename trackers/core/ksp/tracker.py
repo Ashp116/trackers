@@ -117,7 +117,7 @@ class KSPTracker(BaseOfflineTracker):
         """
         self._solver.reset()
 
-    def _update(self, detections: sv.Detections) -> sv.Detections:
+    def _update(self, frame: np.ndarray, detections: sv.Detections) -> sv.Detections:
         """
         Add detections for the current frame to the solver.
 
@@ -127,7 +127,7 @@ class KSPTracker(BaseOfflineTracker):
         Returns:
             sv.Detections: The same detections passed in.
         """
-        self._solver.append_frame(detections)
+        self._solver.append_frame(frame, detections)
         return detections
 
     def set_entry_exit_regions(self, regions: List[Tuple[int, int, int, int]]) -> None:
@@ -267,7 +267,7 @@ class KSPTracker(BaseOfflineTracker):
                 dynamic_ncols=True,
             ):
                 detections = get_model_detections(frame)
-                self._update(detections)
+                self._update(frame, detections)
         elif isinstance(source, str) and os.path.isdir(source):
             frame_paths = sorted(
                 [
@@ -275,7 +275,7 @@ class KSPTracker(BaseOfflineTracker):
                     for f in os.listdir(source)
                     if f.lower().endswith(".jpg")
                 ]
-            )
+            )[:100]
 
             has_set_frame_size = False
 
@@ -286,7 +286,7 @@ class KSPTracker(BaseOfflineTracker):
             ):
                 image = cv2.imread(frame_path)
                 height, width = image.shape[:2]
-
+                self._solver.frame_size(height, width)
                 if not has_set_frame_size:
                     self._solver.set_border_entry_exit(
                         self.use_border,
@@ -296,13 +296,13 @@ class KSPTracker(BaseOfflineTracker):
                     )
 
                 detections = get_model_detections(image)
-                self._update(detections)
+                self._update(image, detections)
         else:
             raise ValueError(f"{source} not a valid path or list of PIL.Image.Image.")
         paths = self._solver.solve(num_of_tracks)
-
+        return paths
         if not paths:
             return []
-        return self._assign_tracker_ids_from_paths(
-            paths
-        ), self._solver.detection_per_frame
+        # return self._assign_tracker_ids_from_paths(
+        #     paths
+        # ), self._solver.detection_per_frame

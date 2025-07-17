@@ -1,12 +1,100 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple, Union
 
 import networkx as nx
 import numpy as np
 import supervision as sv
 from tqdm.auto import tqdm
 
+import matplotlib.pyplot as plt
+from pyvis.network import Network
+
+def path_to_pixel_positions(
+    path: List[Union[str, Tuple[int, int, int]]],
+    frame_height: int,
+    frame_width: int,
+    grid_rows: int = 56,
+    grid_cols: int = 61
+) -> List[Tuple[int, Tuple[int, int]]]:
+    """
+    Convert path from (t, row, col) to pixel positions (x, y) for each frame t.
+    Excludes 'SOURCE' and 'SINK'.
+    
+    Returns a list of (t, (x, y)) tuples.
+    """
+    cell_height = frame_height / grid_rows
+    cell_width = frame_width / grid_cols
+
+    pixel_path = []
+
+    for node in path:
+        if node == "SOURCE" or node == "SINK":
+            continue
+        t, row, col = node
+        x = int((col + 0.5) * cell_width)
+        y = int((row + 0.5) * cell_height)
+        pixel_path.append((x, y))
+
+    return pixel_path
+
+def visualize_graph_pyvis(G: nx.DiGraph, output_file: str = "berclaz_graph.html"):
+    net = Network(height="800px", width="100%", directed=True)
+    net.toggle_physics(False)  # Disable physics/no gravity
+
+    # Add nodes
+    for node in G.nodes:
+        if node == "SOURCE":
+            net.add_node("SOURCE", label="SOURCE", color="green", shape="box", level=0)
+        elif node == "SINK":
+            net.add_node("SINK", label="SINK", color="red", shape="box", level=999)
+        else:
+            t, row, col = node
+            label = f"t={t}, r={row}, c={col}"
+            net.add_node(str(node), label=label, title=label, color="lightblue", level=t)
+
+    # Add edges (convert float32 to float)
+    for u, v, data in G.edges(data=True):
+        weight = data.get("weight", 1)
+        # Convert weight to native float if needed
+        if hasattr(weight, "item"):
+            weight = float(weight.item())
+        else:
+            weight = float(weight)
+
+        net.add_edge(str(u), str(v), value=1.0 / (1.0 + abs(weight)), title=f"weight={weight:.2f}")
+
+    net.show(output_file, notebook=False)
+
+def show_occupancy_overlay(frame: np.ndarray, occupancy_map: np.ndarray, alpha: float = 0.5, title: str = "Occupancy Overlay"):
+    grid_rows, grid_cols = occupancy_map.shape
+    frame_height, frame_width = frame.shape[:2]
+
+    cell_height = frame_height / grid_rows
+    cell_width = frame_width / grid_cols
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.imshow(frame[..., ::-1])  # Convert BGR to RGB if using OpenCV
+
+    # Overlay occupancy map
+    ax.imshow(occupancy_map, cmap='Reds', alpha=alpha,
+              extent=[0, frame_width, frame_height, 0], interpolation='nearest')
+
+    # Draw grid lines (optional)
+    for r in range(grid_rows + 1):
+        y = r * cell_height
+        ax.axhline(y, color='white', linestyle='--', linewidth=0.5, alpha=0.4)
+
+    for c in range(grid_cols + 1):
+        x = c * cell_width
+        ax.axvline(x, color='white', linestyle='--', linewidth=0.5, alpha=0.4)
+
+    ax.set_title(title)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.tight_layout()
+    plt.show()
 
 @dataclass(frozen=True)
 class TrackNode:
@@ -18,16 +106,19 @@ class TrackNode:
     confidence: float
 
     def __hash__(self):
-        return hash((self.frame_id, self.det_idx))
+        pass
 
     def __eq__(self, other: Any):
-        return isinstance(other, TrackNode) and (self.frame_id, self.det_idx) == (
-            other.frame_id,
-            other.det_idx,
-        )
+        pass
 
     def __str__(self):
-        return f"{self.frame_id}:{self.det_idx}@{self.position}"
+        pass
+
+def gaussian_kernel(size: int, sigma: float) -> np.ndarray:
+    ax = np.linspace(-(size // 2), size // 2, size)
+    xx, yy = np.meshgrid(ax, ax)
+    kernel = np.exp(-(xx**2 + yy**2) / (2. * sigma**2))
+    return kernel / np.sum(kernel)
 
 
 class KSPSolver:
@@ -41,78 +132,56 @@ class KSPSolver:
         entry_weight: float = 2.0,
         exit_weight: float = 2.0,
     ):
-        self.path_overlap_penalty = (
-            path_overlap_penalty if path_overlap_penalty is not None else 40
-        )
-        self.weight_key = "weight"
-        self.source = "SOURCE"
-        self.sink = "SINK"
-        self.detection_per_frame: List[sv.Detections] = []
-        self.weights = {"iou": 0.9, "dist": 0.1, "size": 0.1, "conf": 0.1}
-        self.entry_weight = entry_weight
-        self.exit_weight = exit_weight
+        self._pMaps = []
+        self._frameSize = ()
+        pass
 
-        if path_overlap_penalty is not None:
-            self.path_overlap_penalty = path_overlap_penalty
-        if iou_weight is not None:
-            self.weights["iou"] = iou_weight
-        if dist_weight is not None:
-            self.weights["dist"] = dist_weight
-        if size_weight is not None:
-            self.weights["size"] = size_weight
-        if conf_weight is not None:
-            self.weights["conf"] = conf_weight
-
-        # Entry/exit region settings
-        self.entry_exit_regions: List[
-            Tuple[int, int, int, int]
-        ] = []  # (x1, y1, x2, y2)
-
-        # Border region settings
-        self.use_border_regions = True
-        self.active_borders: Set[str] = {"left", "right", "top", "bottom"}
-        self.border_margin = 40
-        self.frame_size = (1920, 1080)
-
-        self.reset()
+    def frame_size(self, height, width):
+        self._frameSize = (width, height)
 
     def reset(self) -> None:
-        """
-        Reset the solver state, clearing all buffered detections and the graph.
-        """
-        self.detection_per_frame = []
-        self.graph = nx.DiGraph()
+        pass
 
-    def append_frame(self, detections: sv.Detections) -> None:
-        """
-        Add detections for the current frame to the solver's buffer.
+    def append_frame(self, frame: np.ndarray, detections: sv.Detections) -> None:
+        grid_rows, grid_cols = 56, 61
+        frame_height, frame_width = frame.shape[:2]
 
-        Args:
-            detections (sv.Detections): Detections for the current frame.
-        """
-        self.detection_per_frame.append(detections)
+        cell_height = frame_height / grid_rows
+        cell_width = frame_width / grid_cols
+
+        occupancy_map = np.zeros((grid_rows, grid_cols), dtype=np.float32)
+
+        kernel_size = 9
+        sigma = 1.5
+        ax = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
+        xx, yy = np.meshgrid(ax, ax)
+        gaussian = np.exp(-(xx**2 + yy**2) / (2. * sigma**2))
+        gaussian /= gaussian.sum()
+        k_half = kernel_size // 2
+
+        for xyxy in detections.xyxy:
+            x1, y1, x2, y2 = map(int, xyxy)
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+
+            col = int(cx / cell_width)
+            row = int(cy / cell_height)
+
+            for i in range(-k_half, k_half + 1):
+                for j in range(-k_half, k_half + 1):
+                    r, c = row + i, col + j
+                    if 0 <= r < grid_rows and 0 <= c < grid_cols:
+                        occupancy_map[r, c] += gaussian[i + k_half, j + k_half]
+
+        occupancy_map = np.clip(occupancy_map, 0, 1)
+        self._pMaps.append(occupancy_map)
+
 
     def _get_center(self, bbox: np.ndarray) -> np.ndarray:
-        """
-        Compute the center (x, y) of a bounding box.
-
-        Args:
-            bbox (np.ndarray): Bounding box as [x1, y1, x2, y2].
-
-        Returns:
-            np.ndarray: Center coordinates as (x, y).
-        """
-        x1, y1, x2, y2 = bbox
-        return np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+        pass
 
     def set_entry_exit_regions(self, regions: List[Tuple[int, int, int, int]]) -> None:
-        """
-        Set rectangular entry/exit zones (x1, y1, x2, y2).
-
-        Args:
-            regions (List[Tuple[int, int, int, int]]): List of rectangular regions.
-        """
-        self.entry_exit_regions = regions
+        pass
 
     def set_border_entry_exit(
         self,
@@ -121,188 +190,85 @@ class KSPSolver:
         margin: int = 40,
         frame_size: Tuple[int, int] = (1920, 1080),
     ) -> None:
-        """
-        Configure border-based entry/exit zones.
-
-        Args:
-            use_border (bool): Enable/disable border-based entry/exit.
-            borders (Optional[Set[str]]): Set of borders to use.
-            margin (int): Border thickness in pixels.
-            frame_size (Tuple[int, int]): Size of the image (width, height).
-        """
-        self.use_border_regions = use_border
-        self.active_borders = (
-            borders if borders is not None else {"left", "right", "top", "bottom"}
-        )
-        self.border_margin = margin
-        self.frame_size = frame_size
+        pass
 
     def _in_door(self, node: TrackNode) -> bool:
-        """
-        Check if a node is inside any entry/exit region (rectangular or border).
-
-        Args:
-            node (TrackNode): The node to check.
-
-        Returns:
-            bool: True if in any entry/exit region, else False.
-        """
-        x, y = node.position
-
-        # Check custom rectangular regions
-        for x1, y1, x2, y2 in self.entry_exit_regions:
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                return True
-
-        # Check image border zones
-        if self.use_border_regions:
-            width, height = self.frame_size
-            m = self.border_margin
-
-            if "left" in self.active_borders and x <= m:
-                return True
-            if "right" in self.active_borders and x >= width - m:
-                return True
-            if "top" in self.active_borders and y <= m:
-                return True
-            if "bottom" in self.active_borders and y >= height - m:
-                return True
-
-        return False
+        pass
 
     def _edge_cost(self, nodeU: TrackNode, nodeV: TrackNode) -> float:
-        """
-        Compute the cost of linking two detections (nodes) in the graph.
-
-        Args:
-            nodeU (TrackNode): Source node.
-            nodeV (TrackNode): Destination node.
-
-        Returns:
-            float: Edge cost based on IoU, distance, size, and confidence weights.
-        """
-        bboxU, bboxV = nodeU.bbox, nodeV.bbox
-        conf_u, conf_v = nodeU.confidence, nodeV.confidence
-
-        center_dist = np.linalg.norm(self._get_center(bboxU) - self._get_center(bboxV))
-        iou_penalty = 1 - sv.box_iou_batch(np.array([bboxU]), np.array([bboxV]))
-
-        area_a = (bboxU[2] - bboxU[0]) * (bboxU[3] - bboxU[1])
-        area_b = (bboxV[2] - bboxV[0]) * (bboxV[3] - bboxV[1])
-        size_penalty = np.log(
-            (max(area_a, area_b) / (min(area_a, area_b) + 1e-6)) + 1e-6
-        )
-
-        conf_penalty = 1 - min(conf_u, conf_v)
-
-        return (
-            self.weights["iou"] * iou_penalty
-            + self.weights["dist"] * center_dist
-            + self.weights["size"] * size_penalty
-            + self.weights["conf"] * conf_penalty
-        )
+        pass
 
     def _build_graph(self):
         """
-        Build the directed graph of detections for KSP computation.
-        Nodes represent detections; edges represent possible associations.
+        Build a space-time graph for offline tracking using Berclaz's formulation.
+        Each node is a (t, row, col) grid cell with occupancy.
+        Edges are weighted by average negative log-odds of occupancy.
         """
         G = nx.DiGraph()
-        G.add_node(self.source)
-        G.add_node(self.sink)
+        num_frames = len(self._pMaps)
+        grid_rows, grid_cols = self._pMaps[0].shape
 
-        node_frames = []
+        source_node = 'SOURCE'
+        sink_node = 'SINK'
+        G.add_node(source_node)
+        G.add_node(sink_node)
 
-        for frame_id, detections in enumerate(self.detection_per_frame):
+        radius_scale = 2
+
+        spatial_offsets = [
+            (dy * radius_scale, dx * radius_scale)
+            for dy in [-1, 0, 1]
+            for dx in [-1, 0, 1]
+        ]
+
+        epsilon = 1e-6  # Avoid division by zero and log(0)
+        detection_nodes = []
+
+        # Step 1: Add detection nodes with log-odds as weight
+        for t, occ_map in enumerate(self._pMaps):
             frame_nodes = []
-            for det_idx, bbox in enumerate(detections.xyxy):
-                node = TrackNode(
-                    frame_id=frame_id,
-                    det_idx=det_idx,
-                    class_id=int(detections.class_id[det_idx]),
-                    position=tuple(self._get_center(bbox)),
-                    bbox=bbox,
-                    confidence=float(detections.confidence[det_idx]),
-                )
-                G.add_node(node)
-                frame_nodes.append(node)
-            node_frames.append(frame_nodes)
+            for row in range(grid_rows):
+                for col in range(grid_cols):
+                    p = np.clip(occ_map[row, col], epsilon, 1 - epsilon)
+                    if p > 0:
+                        node = (t, row, col)
+                        log_odds = -np.log10(p / (1 - p))  # Cost
+                        G.add_node(node, weight=log_odds)
+                        frame_nodes.append(node)
+            detection_nodes.append(frame_nodes)
 
-        total_frames = len(node_frames) - 1
+        # Step 2: Add temporal edges with cost = avg of log-odds between adjacent frames
+        for t in range(num_frames - 1):
+            curr_nodes = detection_nodes[t]
+            next_nodes_set = set(detection_nodes[t + 1])  # Fast lookup
 
-        for t in range(total_frames):
-            for node_a in node_frames[t]:
-                if t > 0 and self._in_door(node_a):
-                    G.add_edge(self.source, node_a, weight=t * self.entry_weight)
-                    G.add_edge(
-                        node_a,
-                        self.sink,
-                        weight=(len(node_frames) - 1 - t) * self.exit_weight,
-                    )
+            for node in curr_nodes:
+                _, row, col = node
+                w1 = G.nodes[node]['weight']
 
-                for node_b in node_frames[t + 1]:
-                    cost = self._edge_cost(node_a, node_b)
-                    G.add_edge(node_a, node_b, weight=cost)
+                for dr, dc in spatial_offsets:
+                    nr, nc = row + dr, col + dc
+                    if 0 <= nr < grid_rows and 0 <= nc < grid_cols:
+                        next_node = (t + 1, nr, nc)
+                        if next_node in next_nodes_set:
+                            w2 = G.nodes[next_node]['weight']
+                            edge_weight = (w1 + w2) / 2
+                            G.add_edge(node, next_node, weight=edge_weight)
 
-        for node in node_frames[0]:
-            G.add_edge(self.source, node, weight=0.0)
-        for node in node_frames[-1]:
-            G.add_edge(node, self.sink, weight=0.0)
+        # Step 3: Connect SOURCE → first frame nodes (weight = 0)
+        for node in detection_nodes[0]:
+            G.add_edge(source_node, node, weight=0)
 
+        # Step 4: Connect last frame nodes → SINK (weight = 0)
+        for node in detection_nodes[-1]:
+            G.add_edge(node, sink_node, weight=0)
+
+        # Store the graph
         self.graph = G
 
     def solve(self, k: Optional[int] = None) -> List[List[TrackNode]]:
-        """
-        Solve the K-Shortest Paths problem on the constructed detection graph.
-
-        This method extracts up to k node-disjoint paths from the source to the sink in
-        the detection graph, assigning each path as a unique object track. Edge reuse is
-        penalized to encourage distinct tracks. The cost of each edge is determined by
-        the configured weights for IoU, distance, size, and confidence.
-
-        Args:
-            k (Optional[int]): The number of tracks (paths) to extract. If None,
-                uses the number of direct successors of the source node, which
-                represents the number of track start points.
-
-        Returns:
-            List[List[TrackNode]]: A list of tracks, each track is a list of TrackNode
-                objects representing the detections assigned to that track.
-        """
         self._build_graph()
+        print(len(self._pMaps))
 
-        G_base = self.graph.copy()
-        edge_reuse: defaultdict[Tuple[Any, Any], int] = defaultdict(int)
-        paths: List[List[TrackNode]] = []
-
-        if k is None:
-            max_frame_detections = max(len(f.xyxy) for f in self.detection_per_frame)
-            k = min(max_frame_detections + 5, int(max_frame_detections * 1.5))
-
-
-        for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
-            G_mod = G_base.copy()
-
-            for u, v, data in G_mod.edges(data=True):
-                base = data[self.weight_key]
-                penalty = self.path_overlap_penalty * 1e8 * edge_reuse[(u, v)] * base
-                data[self.weight_key] = base + penalty
-
-            try:
-                _, path = nx.single_source_dijkstra(
-                    G_mod, self.source, self.sink, weight=self.weight_key
-                )
-            except nx.NetworkXNoPath:
-                print(f"No path found from source to sink at {_i}th iteration")
-                break
-
-            if path[1:-1] in paths:
-                print("Duplicate path found!")
-                continue
-
-            paths.append(path[1:-1])
-
-            for u, v in zip(path[:-1], path[1:]):
-                edge_reuse[(u, v)] += 1
-
-        return paths
+        path = nx.bellman_ford_path(self.graph, "SOURCE", "SINK", "weight")
+        return (path_to_pixel_positions(path, self._frameSize[1], self._frameSize[0]))
