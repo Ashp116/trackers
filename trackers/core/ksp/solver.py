@@ -14,8 +14,8 @@ def path_to_pixel_positions(
     path: List[Union[str, Tuple[int, int, int]]],
     frame_height: int,
     frame_width: int,
-    grid_rows: int = 56,
-    grid_cols: int = 61
+    grid_rows: int = 156,
+    grid_cols: int = 177
 ) -> List[Tuple[int, Tuple[int, int]]]:
     """
     Convert path from (t, row, col) to pixel positions (x, y) for each frame t.
@@ -66,33 +66,55 @@ def visualize_graph_pyvis(G: nx.DiGraph, output_file: str = "berclaz_graph.html"
 
     net.show(output_file, notebook=False)
 
-def show_occupancy_overlay(frame: np.ndarray, occupancy_map: np.ndarray, alpha: float = 0.5, title: str = "Occupancy Overlay"):
-    grid_rows, grid_cols = occupancy_map.shape
-    frame_height, frame_width = frame.shape[:2]
+def show_occupancy_overlay_sequence(frames: list[np.ndarray],
+                                    occupancy_maps: list[np.ndarray],
+                                    alpha: float = 0.5,
+                                    title: str = "Occupancy Overlay"):
+    assert len(frames) == len(occupancy_maps), "Frames and maps must be of equal length"
+    num_frames = len(frames)
+    index = [0]  # Mutable so the inner function can modify it
 
-    cell_height = frame_height / grid_rows
-    cell_width = frame_width / grid_cols
-
-    # Plot
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.imshow(frame[..., ::-1])  # Convert BGR to RGB if using OpenCV
+    image = None
+    overlay = None
 
-    # Overlay occupancy map
-    ax.imshow(occupancy_map, cmap='Reds', alpha=alpha,
-              extent=[0, frame_width, frame_height, 0], interpolation='nearest')
+    def draw_frame(i):
+        ax.clear()
+        frame = frames[i]
+        occupancy_map = occupancy_maps[i]
 
-    # Draw grid lines (optional)
-    for r in range(grid_rows + 1):
-        y = r * cell_height
-        ax.axhline(y, color='white', linestyle='--', linewidth=0.5, alpha=0.4)
+        grid_rows, grid_cols = occupancy_map.shape
+        frame_height, frame_width = frame.shape[:2]
+        cell_height = frame_height / grid_rows
+        cell_width = frame_width / grid_cols
 
-    for c in range(grid_cols + 1):
-        x = c * cell_width
-        ax.axvline(x, color='white', linestyle='--', linewidth=0.5, alpha=0.4)
+        ax.imshow(frame[..., ::-1])  # Convert BGR to RGB if needed
+        ax.imshow(occupancy_map, cmap='Reds', alpha=alpha,
+                  extent=[0, frame_width, frame_height, 0], interpolation='nearest')
 
-    ax.set_title(title)
-    ax.set_xticks([])
-    ax.set_yticks([])
+        # Draw grid lines
+        for r in range(grid_rows + 1):
+            y = r * cell_height
+            ax.axhline(y, color='white', linestyle='--', linewidth=0.5, alpha=0.4)
+        for c in range(grid_cols + 1):
+            x = c * cell_width
+            ax.axvline(x, color='white', linestyle='--', linewidth=0.5, alpha=0.4)
+
+        ax.set_title(f"{title} ({i+1}/{num_frames})")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        fig.canvas.draw_idle()
+
+    def on_key(event):
+        if event.key == 'right':
+            index[0] = (index[0] + 1) % num_frames
+            draw_frame(index[0])
+        elif event.key == 'left':
+            index[0] = (index[0] - 1) % num_frames
+            draw_frame(index[0])
+
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    draw_frame(index[0])
     plt.tight_layout()
     plt.show()
 
@@ -134,6 +156,7 @@ class KSPSolver:
     ):
         self._pMaps = []
         self._frameSize = ()
+        self._frames = []
         pass
 
     def frame_size(self, height, width):
@@ -143,7 +166,7 @@ class KSPSolver:
         pass
 
     def append_frame(self, frame: np.ndarray, detections: sv.Detections) -> None:
-        grid_rows, grid_cols = 56, 61
+        grid_rows, grid_cols = 156, 177
         frame_height, frame_width = frame.shape[:2]
 
         cell_height = frame_height / grid_rows
@@ -175,6 +198,7 @@ class KSPSolver:
 
         occupancy_map = np.clip(occupancy_map, 0, 1)
         self._pMaps.append(occupancy_map)
+        self._frames.append(frame)
 
 
     def _get_center(self, bbox: np.ndarray) -> np.ndarray:
@@ -232,7 +256,7 @@ class KSPSolver:
                     p = np.clip(occ_map[row, col], epsilon, 1 - epsilon)
                     if p > 0:
                         node = (t, row, col)
-                        log_odds = -np.log10(p / (1 - p))  # Cost
+                        log_odds = -np.log(p / (1 - p))  # Cost
                         G.add_node(node, weight=log_odds)
                         frame_nodes.append(node)
             detection_nodes.append(frame_nodes)
@@ -267,6 +291,7 @@ class KSPSolver:
         self.graph = G
 
     def solve(self, k: Optional[int] = None) -> List[List[TrackNode]]:
+        show_occupancy_overlay_sequence(self._frames, self._pMaps)
         self._build_graph()
         print(len(self._pMaps))
 
