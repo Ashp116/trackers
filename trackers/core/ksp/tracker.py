@@ -188,7 +188,9 @@ class KSPTracker(BaseOfflineTracker):
         """
         # Map from frame to list of dicts with detection info + tracker_id
         frame_to_dets = defaultdict(list)
-
+        import pprint
+        pp = pprint.PrettyPrinter()
+        # pp.pprint(paths)
         # Assign each node a unique tracker ID (path index + 1)
         for tracker_id, path in enumerate(paths, start=1):
             for node in path:
@@ -200,6 +202,7 @@ class KSPTracker(BaseOfflineTracker):
                         "tracker_id": tracker_id,
                     }
                 )
+        print(len(frame_to_dets.keys()))
 
         # Convert detections per frame into sv.Detections objects
         frame_to_detections = []
@@ -219,7 +222,7 @@ class KSPTracker(BaseOfflineTracker):
                 tracker_id=tracker_id,
             )
             frame_to_detections.append(detections)
-
+        print(len(frame_to_detections))
         return frame_to_detections
 
     def track(
@@ -274,7 +277,7 @@ class KSPTracker(BaseOfflineTracker):
                     os.path.join(source, f)
                     for f in os.listdir(source)
                     if f.lower().endswith(".jpg")
-                ]
+                ][:100]
             )
 
             has_set_frame_size = False
@@ -305,4 +308,4 @@ class KSPTracker(BaseOfflineTracker):
             return []
         return self._assign_tracker_ids_from_paths(
             paths
-        ), self._solver.detection_per_frame
+        )

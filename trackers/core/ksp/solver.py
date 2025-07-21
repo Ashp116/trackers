@@ -213,6 +213,8 @@ class KSPSolver:
 
         node_frames = []
 
+        max_dets = max(len(f.xyxy) for f in self.detection_per_frame)
+
         for frame_id, detections in enumerate(self.detection_per_frame):
             frame_nodes = []
             for det_idx, bbox in enumerate(detections.xyxy):
@@ -226,10 +228,27 @@ class KSPSolver:
                 )
                 G.add_node(node)
                 frame_nodes.append(node)
+            
+            for i in range(max_dets - len(frame_nodes)):
+                node = TrackNode(
+                    frame_id=frame_id,
+                    det_idx=-1,
+                    class_id=0,
+                    position=(0, 0),
+                    bbox=np.array([0, 0, 0, 0]),
+                    confidence=0.0,
+                )
+                G.add_node(node)
+                frame_nodes.append(node)
             node_frames.append(frame_nodes)
 
         for t in range(len(node_frames) - 1):
             for node_a in node_frames[t]:
+                if node_a.det_idx == -1:
+                    for node_b in node_frames[t + 1]:
+                        G.add_edge(node_a, node_b, weight=0 if node_b.det_idx == -1 else 100000000000)
+                    continue
+
                 if self._in_door(node_a):
                     G.add_edge(self.source, node_a, weight=t * self.entry_weight)
                     G.add_edge(
@@ -273,7 +292,7 @@ class KSPSolver:
         paths: List[List[TrackNode]] = []
 
         if k is None:
-            k = max(len(f.xyxy) for f in self.detection_per_frame)
+            k = max([len(f.xyxy) for f in self.detection_per_frame])
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
             G_mod = G_base.copy()
