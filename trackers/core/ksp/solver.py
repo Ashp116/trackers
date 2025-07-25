@@ -10,7 +10,7 @@ from pyvis.network  import Network
 
 import random
 
-def visualize_tracking_graph_with_path_pyvis(
+def  visualize_tracking_graph_with_path_pyvis(
     G: nx.DiGraph,
     paths: list = [],
     output_file="graph.html"
@@ -337,7 +337,7 @@ class KSPSolver:
             for node_a in node_frames[t]:
                 if node_a.det_idx < 0:
                     for node_b in node_frames[t + 1]:
-                        G.add_edge(node_a, node_b, weight=0 if node_b.det_idx < 0 else 100000000000)
+                        G.add_edge(node_a, node_b, weight=0 if node_b.det_idx < 0 else np.inf)
                     continue
 
                 # if self._in_door(node_a):
@@ -350,7 +350,7 @@ class KSPSolver:
 
                 for node_b in node_frames[t + 1]:
                     if node_a.det_idx < 0:
-                        G.add_edge(node_a, node_b, weight=10)
+                        G.add_edge(node_a, node_b, weight=100)
                         continue
                     cost = self._edge_cost(node_a, node_b)
                     G.add_edge(node_a, node_b, weight=cost)
@@ -415,5 +415,5 @@ class KSPSolver:
             G_mod.remove_nodes_from(path[1:-1])
             # for u, v in zip(path[:-1], path[1:]):
             #     edge_reuse[(u, v)] += 1
-        # visualize_tracking_graph_with_path_pyvis(self.graph, paths)
+        #visualize_tracking_graph_with_path_pyvis(self.graph, paths)
         return paths
