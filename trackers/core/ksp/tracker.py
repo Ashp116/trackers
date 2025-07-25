@@ -199,10 +199,9 @@ class KSPTracker(BaseOfflineTracker):
                         "xyxy": node.bbox,
                         "confidence": node.confidence,
                         "class_id": node.class_id,
-                        "tracker_id": tracker_id,
+                        "tracker_id": tracker_id if node.det_idx >= 0 else -1,
                     }
                 )
-        print(len(frame_to_dets.keys()))
 
         # Convert detections per frame into sv.Detections objects
         frame_to_detections = []
@@ -222,7 +221,7 @@ class KSPTracker(BaseOfflineTracker):
                 tracker_id=tracker_id,
             )
             frame_to_detections.append(detections)
-        print(len(frame_to_detections))
+
         return frame_to_detections
 
     def track(
@@ -303,7 +302,7 @@ class KSPTracker(BaseOfflineTracker):
         else:
             raise ValueError(f"{source} not a valid path or list of PIL.Image.Image.")
         paths = self._solver.solve(num_of_tracks)
-
+        print(len(paths))
         if not paths:
             return []
         return self._assign_tracker_ids_from_paths(
