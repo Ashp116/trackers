@@ -327,10 +327,10 @@ class KSPSolver:
                     diffuse = self._in_door(node_b)
 
                     if node_b.det_idx < 0:
-                        G.add_edge(node_a, node_b, weight=40 * 0.1 if not diffuse else 40)
+                        G.add_edge(node_a, node_b, weight=40 * 2 if not diffuse else 40)
                         continue
                     cost = self._edge_cost(node_a, node_b)
-                    G.add_edge(node_a, node_b, weight=cost if diffuse else cost * 0.1)
+                    G.add_edge(node_a, node_b, weight=cost if diffuse else cost * 2)
 
         for node in node_frames[0]:
             G.add_edge(self.source, node, weight=0.0)
