@@ -257,7 +257,7 @@ class KSPSolver:
         conf_u, conf_v = nodeU.confidence, nodeV.confidence
 
         center_dist = np.linalg.norm(self._get_center(bboxU) - self._get_center(bboxV))
-        iou_penalty = 1 - sv.box_iou_batch(np.array([bboxU]), np.array([bboxV]))
+        iou_penalty = 1 - sv.box_iou(bboxU, bboxV)
 
         area_a = (bboxU[2] - bboxU[0]) * (bboxU[3] - bboxU[1])
         area_b = (bboxV[2] - bboxV[0]) * (bboxV[3] - bboxV[1])
@@ -267,29 +267,11 @@ class KSPSolver:
 
         conf_penalty = 1 - min(conf_u, conf_v)
 
-         # === New: Add velocity consistency penalty ===
-        velocity_penalty = 0.0
-        if nodeU.frame_id > 0:
-            # Estimate velocity from t-2 to t-1 (if previous frame exists)
-            prev_frame_id = nodeU.frame_id - 1
-            if prev_frame_id < len(self.detection_per_frame):
-                prev_dets = self.detection_per_frame[prev_frame_id]
-                for prev_det_idx, prev_bbox in enumerate(prev_dets.xyxy):
-                    prev_center = self._get_center(prev_bbox)
-                    curr_center = np.array(nodeU.position)
-                    velocity = curr_center - prev_center
-
-                    predicted_next = curr_center + velocity
-                    deviation = np.linalg.norm(predicted_next - np.array(nodeV.position))
-                    velocity_penalty = deviation
-                    break  # Only do this for one prev det (you can refine this later)
-
         return (
             self.weights["iou"] * iou_penalty
             + self.weights["dist"] * center_dist
             + self.weights["size"] * size_penalty
             + self.weights["conf"] * conf_penalty
-            + 0 * velocity_penalty  # <-- tune this weight
         )
 
     def _build_graph(self):
@@ -340,20 +322,15 @@ class KSPSolver:
                         G.add_edge(node_a, node_b, weight=0 if node_b.det_idx < 0 else np.inf)
                     continue
 
-                # if self._in_door(node_a):
-                #     G.add_edge(self.source, node_a, weight=t * self.entry_weight)
-                #     G.add_edge(
-                #         node_a,
-                #         self.sink,
-                #         weight=(len(node_frames) - 1 - t) * self.exit_weight,
-                #     )
 
                 for node_b in node_frames[t + 1]:
-                    if node_a.det_idx < 0:
-                        G.add_edge(node_a, node_b, weight=100)
+                    diffuse = self._in_door(node_b)
+
+                    if node_b.det_idx < 0:
+                        G.add_edge(node_a, node_b, weight=40 * 0.1 if not diffuse else 40)
                         continue
                     cost = self._edge_cost(node_a, node_b)
-                    G.add_edge(node_a, node_b, weight=cost)
+                    G.add_edge(node_a, node_b, weight=cost if diffuse else cost * 0.1)
 
         for node in node_frames[0]:
             G.add_edge(self.source, node, weight=0.0)
