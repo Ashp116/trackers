@@ -319,7 +319,7 @@ class KSPSolver:
             for node_a in node_frames[t]:
                 if node_a.det_idx < 0:
                     for node_b in node_frames[t + 1]:
-                        G.add_edge(node_a, node_b, weight=0 if node_b.det_idx < 0 else np.inf)
+                        G.add_edge(node_a, node_b, weight=0 if node_b.det_idx < 0 else 100 * t)
                     continue
 
 
@@ -327,7 +327,7 @@ class KSPSolver:
                     diffuse = self._in_door(node_b)
 
                     if node_b.det_idx < 0:
-                        G.add_edge(node_a, node_b, weight=40 * (t+1) if not diffuse else 40)
+                        G.add_edge(node_a, node_b, weight=100 * t)
                         continue
                     cost = self._edge_cost(node_a, node_b)
                     G.add_edge(node_a, node_b, weight=cost if diffuse else cost * (t + 1))
@@ -373,7 +373,7 @@ class KSPSolver:
 
             # for u, v, data in G_mod.edges(data=True):
             #     base = data[self.weight_key]
-            #     penalty = self.path_overlap_penalty * 1000 * edge_reuse[(u, v)] * base
+            #     penalty = np.inf
             #     data[self.weight_key] = base + penalty
 
             try:
