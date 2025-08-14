@@ -191,7 +191,7 @@ class KSPTracker(BaseOfflineTracker):
 
         # Assign each node a unique tracker ID (path index + 1)
         for tracker_id, path in enumerate(paths, start=1):
-            for node in path:
+            for node in path:                
                 frame_to_dets[node.frame_id].append(
                     {
                         "xyxy": node.bbox,
@@ -274,7 +274,7 @@ class KSPTracker(BaseOfflineTracker):
                     os.path.join(source, f)
                     for f in os.listdir(source)
                     if f.lower().endswith(".jpg")
-                ]
+                ][:100]
             )
 
             has_set_frame_size = False
@@ -300,9 +300,11 @@ class KSPTracker(BaseOfflineTracker):
         else:
             raise ValueError(f"{source} not a valid path or list of PIL.Image.Image.")
         paths = self._solver.solve(num_of_tracks)
-
+        print("path: ", len(paths))
         if not paths:
             return []
-        return self._assign_tracker_ids_from_paths(
+        tracks =  self._assign_tracker_ids_from_paths(
             paths
-        ), self._solver.detection_per_frame
+        )
+
+        return tracks

@@ -7,6 +7,79 @@ import numpy as np
 import supervision as sv
 from tqdm.auto import tqdm
 
+import random
+from pyvis.network import Network
+
+
+def  visualize_tracking_graph_with_path_pyvis(
+    G: nx.DiGraph,
+    paths: list = [],
+    output_file="graph.html"
+):
+    net = Network(height="800px", width="100%", directed=True)
+    net.toggle_physics(False)  # fix node positions, no physics
+    
+    layer_spacing_x = 300
+    node_spacing_y = 100
+
+    # --- STEP 1: Organize nodes by layer/frame ---
+    frame_to_nodes = defaultdict(list)
+    for node in G.nodes:
+        if str(node).lower() == "source":
+            frame_to_nodes[-1].append(node)
+        elif str(node).lower() == "sink":
+            frame_to_nodes[9999].append(node)
+        else:
+            frame_id = getattr(node, "frame_id", 0)
+            frame_to_nodes[frame_id].append(node)
+
+    sorted_frames = sorted(frame_to_nodes.keys())
+
+    # --- STEP 2: Assign positions and add nodes ---
+    for layer_idx, frame in enumerate(sorted_frames):
+        nodes = frame_to_nodes[frame]
+        n = len(nodes)
+        for i, node in enumerate(nodes):
+            x = layer_idx * layer_spacing_x
+            y = (i - (n - 1) / 2) * node_spacing_y
+
+            node_id = str(node)
+            color = "lightblue"
+            if node_id.lower() == "source":
+                color = "green"
+            elif node_id.lower() == "sink":
+                color = "red"
+
+            label = node_id
+            if hasattr(node, "frame_id") and hasattr(node, "det_idx"):
+                label = f"{node.frame_id}:{node.det_idx}"
+
+            net.add_node(node_id, label=label, x=float(x), y=float(y), color=color, physics=False)
+
+    # --- STEP 3: Add all regular edges in gray ---
+    for u, v, data in G.edges(data=True):
+        u_id, v_id = str(u), str(v)
+        weight = float(data.get("weight", 1.0))
+        net.add_edge(u_id, v_id, label=f"{weight:.2f}", color="gray", width=1)
+
+    # --- STEP 4: Highlight each path in a different color ---
+    path_colors = [
+        "blue", "orange"
+    ]
+    if len(paths) > len(path_colors):
+        # Generate additional random distinct colors
+        for _ in range(len(paths) - len(path_colors)):
+            color = "#{:06x}".format(random.randint(0, 0xFFFFFF))
+            path_colors.append(color)
+
+    for path_idx, path in enumerate(paths):
+        color = path_colors[path_idx % len(path_colors)]
+        for i in range(len(path) - 1):
+            u_id, v_id = str(path[i]), str(path[i + 1])
+            if G.has_edge(path[i], path[i + 1]):
+                net.add_edge(u_id, v_id, color=color, width=4)
+
+    net.show(output_file, notebook=False)
 
 @dataclass(frozen=True)
 class TrackNode:
@@ -226,20 +299,40 @@ class KSPSolver:
                 )
                 G.add_node(node)
                 frame_nodes.append(node)
+
+            # Adding burrow nodes
+            burrow_node = TrackNode(
+                    frame_id=frame_id,
+                    det_idx=-1,
+                    class_id=-1,
+                    position=(0,0),
+                    bbox=(0,0,0,0),
+                    confidence=0,
+                )
+            G.add_node(burrow_node)
+            frame_nodes.append(burrow_node)
+
             node_frames.append(frame_nodes)
 
         for t in range(len(node_frames) - 1):
             for node_a in node_frames[t]:
-                if self._in_door(node_a):
-                    G.add_edge(self.source, node_a, weight=t * self.entry_weight)
-                    G.add_edge(
-                        node_a,
-                        self.sink,
-                        weight=(len(node_frames) - 1 - t) * self.exit_weight,
-                    )
+                
 
                 for node_b in node_frames[t + 1]:
+                    thres = 5
+                    if node_b.det_idx == -1:
+                        if self._in_door(node_b) and node_b.det_idx != -1:
+                            G.add_edge(node_a, node_b, weight=0)
+                            continue
+                        G.add_edge(node_a, node_b, weight=thres)
+                        continue
                     cost = self._edge_cost(node_a, node_b)
+
+                    if cost > thres:
+                        cost = np.inf
+                    
+                    if node_a.det_idx == -1:
+                        cost = thres * 10
                     G.add_edge(node_a, node_b, weight=cost)
 
         for node in node_frames[0]:
@@ -269,6 +362,7 @@ class KSPSolver:
         self._build_graph()
 
         G_base = self.graph.copy()
+        G_mod = G_base.copy()
         edge_reuse: defaultdict[Tuple[Any, Any], int] = defaultdict(int)
         paths: List[List[TrackNode]] = []
 
@@ -276,12 +370,12 @@ class KSPSolver:
             k = max(len(f.xyxy) for f in self.detection_per_frame)
 
         for _i in tqdm(range(k), desc="Extracting k-shortest paths", leave=True):
-            G_mod = G_base.copy()
 
-            for u, v, data in G_mod.edges(data=True):
-                base = data[self.weight_key]
-                penalty = self.path_overlap_penalty * 1000 * edge_reuse[(u, v)] * base
-                data[self.weight_key] = base + penalty
+
+            # for u, v, data in G_mod.edges(data=True):
+            #     base = data[self.weight_key]
+            #     penalty = self.path_overlap_penalty * 1000 * edge_reuse[(u, v)] * base
+            #     data[self.weight_key] = base + penalty
 
             try:
                 _, path = nx.single_source_dijkstra(
@@ -293,11 +387,12 @@ class KSPSolver:
 
             if path[1:-1] in paths:
                 print("Duplicate path found!")
-                continue
+                break
 
             paths.append(path[1:-1])
 
-            for u, v in zip(path[:-1], path[1:]):
-                edge_reuse[(u, v)] += 1
-
+            for i in path[1:-1]:
+                if i.det_idx != -1:
+                    G_mod.remove_node(i)
+        # visualize_tracking_graph_with_path_pyvis(G_base, paths)
         return paths
