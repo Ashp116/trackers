@@ -319,18 +319,15 @@ class KSPSolver:
             for node_a in node_frames[t]:
                 if node_a.det_idx < 0:
                     for node_b in node_frames[t + 1]:
-                        G.add_edge(node_a, node_b, weight=0 if node_b.det_idx < 0 else 100 * t)
+                        G.add_edge(node_a, node_b, weight=0 if node_b.det_idx < 0 else 10)
                     continue
 
 
                 for node_b in node_frames[t + 1]:
-                    diffuse = self._in_door(node_b)
-
-                    if node_b.det_idx < 0:
-                        G.add_edge(node_a, node_b, weight=100 * t)
-                        continue
                     cost = self._edge_cost(node_a, node_b)
-                    G.add_edge(node_a, node_b, weight=cost if diffuse else cost * (t + 1))
+                    if cost > 2:
+                        cost = np.inf
+                    G.add_edge(node_a, node_b, weight=cost)
 
         for node in node_frames[0]:
             G.add_edge(self.source, node, weight=0.0)
