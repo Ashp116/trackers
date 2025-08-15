@@ -319,12 +319,12 @@ class KSPSolver:
                 
 
                 for node_b in node_frames[t + 1]:
-                    thres = 5
+                    thres = 8
                     if node_b.det_idx == -1:
                         if self._in_door(node_b) and node_b.det_idx != -1:
                             G.add_edge(node_a, node_b, weight=0)
                             continue
-                        G.add_edge(node_a, node_b, weight=thres)
+                        G.add_edge(node_a, node_b, weight=6)
                         continue
                     cost = self._edge_cost(node_a, node_b)
 
@@ -332,7 +332,7 @@ class KSPSolver:
                         cost = np.inf
                     
                     if node_a.det_idx == -1:
-                        cost = thres * 10
+                        cost = 6
                     G.add_edge(node_a, node_b, weight=cost)
 
         for node in node_frames[0]:
