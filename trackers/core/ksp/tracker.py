@@ -274,7 +274,7 @@ class KSPTracker(BaseOfflineTracker):
                     os.path.join(source, f)
                     for f in os.listdir(source)
                     if f.lower().endswith(".jpg")
-                ][:100]
+                ]
             )
 
             has_set_frame_size = False
